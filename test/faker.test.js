@@ -221,6 +221,7 @@ const functions = [
   "snack",
 ];
 
+
 export default function () {
   describe("Faker constructor", (t) => {
     const f = new Faker();

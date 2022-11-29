@@ -23,10 +23,12 @@
 package faker
 
 import (
-	"context"
+	// "go.k6.io/k6/js/common"
+	"errors"
 	"os"
 	"strconv"
 
+	"github.com/dop251/goja"
 	"github.com/sirupsen/logrus"
 	"go.k6.io/k6/js/common"
 	"go.k6.io/k6/js/modules"
@@ -39,20 +41,64 @@ func init() {
 	modules.Register("k6/x/faker", New())
 }
 
-type Module struct {
-	*Faker
+type (
+	// RootModule is the global module instance that will create module
+	// instances for each VU.
+	RootModule struct{}
+
+	// ModuleInstance represents an instance of the GRPC module for every VU.
+	ModuleInstance struct {
+		vu      modules.VU
+		exports map[string]interface{}
+		faker   *Faker
+	}
+)
+
+// Ensure the interfaces are implemented correctly.
+var (
+	_ modules.Instance = &ModuleInstance{}
+	_ modules.Module   = &RootModule{}
+)
+
+func New() *RootModule {
+	return &RootModule{}
 }
 
-func New() *Module {
-	return &Module{Faker: newFaker(seed())}
+// NewModuleInstance implements the modules.Module interface returning a new instance for each VU.
+func (*RootModule) NewModuleInstance(vu modules.VU) modules.Instance {
+	mi := &ModuleInstance{
+		vu:      vu,
+		exports: make(map[string]interface{}),
+		faker:   newFaker(seed(), vu.Runtime()),
+	}
+
+	mi.exports["Faker"] = mi.NewFaker
+
+	return mi
 }
 
-func (m *Module) XFaker(ctxPtr *context.Context, seed int64) (interface{}, error) {
-	rt := common.GetRuntime(*ctxPtr)
+// Exports implements the modules.Instance interface and returns the exported types for the JS module.
+func (mi *ModuleInstance) Exports() modules.Exports {
+	return modules.Exports{
+		Default: mi.faker,
+		Named:   mi.exports,
+	}
+}
 
-	faker := newFaker(seed)
+func (mi *ModuleInstance) NewFaker(call goja.ConstructorCall) *goja.Object {
+	rt := mi.vu.Runtime()
 
-	return common.Bind(rt, faker, ctxPtr), nil
+	if len(call.Arguments) > 1 {
+		common.Throw(rt, errors.New("Faker constructor accepts only 1 argument (seed argument)"))
+	}
+
+	seed := seed()
+
+	if len(call.Arguments) == 1 {
+		seed = call.Arguments[0].ToInteger()
+	}
+
+	return rt.ToValue(newFaker(seed, rt)).ToObject(rt)
 }
 
 func seed() int64 {
